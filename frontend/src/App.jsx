@@ -221,7 +221,12 @@ export default function App() {
           </div>
         )}
 
-        <pre style={styles.status}>{status}</pre>
+        <pre style={styles.status}>
+          <span style={status === "Folders loaded." ? styles.statusBold : undefined}>
+            {status}
+          </span>
+        </pre>
+
 
         <div style={styles.hint}>
           API: <code>{API}</code>
@@ -262,6 +267,9 @@ const styles = {
     padding: 18,
     boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
   },
+  statusBold: {
+    fontWeight: 800,
+  },  
   label: { display: "block", marginTop: 14, fontWeight: 600 },
   input: { display: "block", width: "100%", marginTop: 8, padding: 10 },
 
@@ -294,6 +302,7 @@ const styles = {
     borderRadius: 10,
     whiteSpace: "pre-wrap",
     border: "1px solid #eee",
+    color: "#111",
   },
 
   hint: { marginTop: 12, fontSize: 12, opacity: 0.7 },
