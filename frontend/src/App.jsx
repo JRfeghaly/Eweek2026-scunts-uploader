@@ -107,6 +107,9 @@ export default function App() {
     }
   }
 
+  // Bold only when folders loaded (you can extend this list if you want)
+  const statusIsBold = status === "Folders loaded.";
+
   return (
     <div style={styles.page}>
       <div style={styles.card}>
@@ -163,7 +166,9 @@ export default function App() {
 
           <div style={styles.subtle}>
             Requested name:{" "}
-            <code>{finalNamePreview || "(pick a file first)"}</code>
+            <code style={styles.codeChip}>
+              {finalNamePreview || "(pick a file first)"}
+            </code>
           </div>
 
           {file && !desiredName.trim() && (
@@ -187,15 +192,16 @@ export default function App() {
         {/* Duplicate warning UI */}
         {duplicateWarning && (
           <div style={styles.warnBox}>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>
-              Duplicate name
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              A file named <code>{finalNamePreview}</code> already exists in this
-              folder.
+            <div style={styles.warnTitle}>Duplicate name</div>
+
+            <div style={styles.warnText}>
+              A file named{" "}
+              <code style={styles.codeChip}>{finalNamePreview}</code> already
+              exists in this folder.
               <br />
-              Uploading anyway will save as <code>name (2)</code>,{" "}
-              <code>name (3)</code>, etc.
+              Uploading anyway will save as{" "}
+              <code style={styles.codeChip}>name (2)</code>,{" "}
+              <code style={styles.codeChip}>name (3)</code>, etc.
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -221,10 +227,15 @@ export default function App() {
           </div>
         )}
 
-        <pre style={styles.status}>{status}</pre>
+        {/* Status box (improved readability + bold for "Folders loaded.") */}
+        <pre style={styles.status}>
+          <span style={statusIsBold ? styles.statusBold : undefined}>
+            {status}
+          </span>
+        </pre>
 
         <div style={styles.hint}>
-          API: <code>{API}</code>
+          API: <code style={styles.codeChip}>{API}</code>
         </div>
       </div>
     </div>
@@ -287,33 +298,64 @@ const styles = {
     cursor: "pointer",
   },
 
+  // ✅ Improved readability: darker text + slightly stronger border
   status: {
     marginTop: 16,
     background: "#fafafa",
     padding: 12,
     borderRadius: 10,
     whiteSpace: "pre-wrap",
-    border: "1px solid #eee",
+    border: "1px solid #e6e6e6",
+    color: "#111", // key for iPhone readability
+    lineHeight: 1.35,
   },
 
-  hint: { marginTop: 12, fontSize: 12, opacity: 0.7 },
-  subtle: { marginTop: 8, fontSize: 12, opacity: 0.75 },
+  // ✅ Bold status when folders loaded
+  statusBold: {
+    fontWeight: 800,
+  },
 
+  hint: { marginTop: 12, fontSize: 12, opacity: 0.75 },
+  subtle: { marginTop: 8, fontSize: 12, opacity: 0.85 },
+
+  // ✅ Make warnings readable on iPhone: darker text + stronger border
   warn: {
     marginTop: 8,
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid #f0d28a",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid #e0b34c",
     background: "#fff8e1",
-    fontSize: 12,
-    lineHeight: 1.3,
+    fontSize: 13,
+    lineHeight: 1.35,
+    color: "#2b2b2b",
   },
 
+  // ✅ Stronger, more readable duplicate warning box
   warnBox: {
     marginTop: 14,
     padding: 14,
     borderRadius: 12,
-    border: "1px solid #f0c36d",
+    border: "1px solid #e0b34c",
     background: "#fff8e1",
+    color: "#2b2b2b",
+  },
+  warnTitle: {
+    fontWeight: 800,
+    marginBottom: 6,
+    color: "#1a1a1a",
+  },
+  warnText: {
+    marginBottom: 10,
+    fontSize: 13,
+    lineHeight: 1.35,
+  },
+
+  // ✅ Code chips with better contrast than default <code> on mobile
+  codeChip: {
+    padding: "2px 6px",
+    borderRadius: 8,
+    background: "#f1f1f1",
+    border: "1px solid #e2e2e2",
+    color: "#111",
   },
 };
