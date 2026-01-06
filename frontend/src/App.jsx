@@ -8,6 +8,15 @@ export default function App() {
 
   const [folders, setFolders] = useState([]);
   const [folderId, setFolderId] = useState("");
+
+  // Subfolder feature
+  const [useSubfolder, setUseSubfolder] = useState(false);
+  const [subfolderMode, setSubfolderMode] = useState("existing"); // "existing" | "new"
+  const [subfolders, setSubfolders] = useState([]);
+  const [subfolderId, setSubfolderId] = useState("");
+  const [newSubfolderName, setNewSubfolderName] = useState("");
+  const [subfolderWarning, setSubfolderWarning] = useState("");
+
   const [file, setFile] = useState(null);
 
   // REQUIRED
@@ -16,9 +25,10 @@ export default function App() {
   const [status, setStatus] = useState("Loading folders...");
   const [busy, setBusy] = useState(false);
 
-  // NEW: duplicate warning UX
+  // Duplicate warning UX (files)
   const [duplicateWarning, setDuplicateWarning] = useState(false);
 
+  // Load main folders
   useEffect(() => {
     async function load() {
       try {
@@ -45,11 +55,128 @@ export default function App() {
     return headers;
   }
 
-  const finalNamePreview = computeFinalNamePreview(file?.name, desiredName);
-  const canUpload =
-    !!file && !!folderId && desiredName.trim().length > 0 && !busy;
+  // Load subfolders whenever:
+  // - useSubfolder enabled
+  // - folderId changes
+  useEffect(() => {
+    async function loadSubfolders() {
+      if (!useSubfolder || !folderId) return;
+      try {
+        setSubfolderWarning("");
+        const res = await fetch(`${API}/api/subfolders?parentId=${folderId}`);
+        if (!res.ok)
+          throw new Error(`Failed to load subfolders (${res.status})`);
+        const data = await res.json();
 
-  async function upload(confirmDuplicate = false) {
+        const list = (data.subfolders || []).slice();
+        // alphabetical
+        list.sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+            sensitivity: "base",
+          })
+        );
+
+        setSubfolders(list);
+        // Default-select first subfolder if existing mode
+        if (subfolderMode === "existing") {
+          setSubfolderId(list[0]?.id || "");
+        }
+      } catch (e) {
+        setSubfolderWarning(`Error loading subfolders: ${e.message}`);
+      }
+    }
+    loadSubfolders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [API, useSubfolder, folderId]);
+
+  const finalNamePreview = computeFinalNamePreview(file?.name, desiredName);
+
+  // Determine target folder constraints
+  const needsSubfolderSelection =
+    useSubfolder &&
+    ((subfolderMode === "existing" && !subfolderId) ||
+      (subfolderMode === "new" && !newSubfolderName.trim()));
+
+  const canUpload =
+    !!file &&
+    !!folderId &&
+    desiredName.trim().length > 0 &&
+    !busy &&
+    !needsSubfolderSelection;
+
+  // Create folder if needed (new mode)
+  async function ensureSubfolderIfNeeded() {
+    setSubfolderWarning("");
+
+    if (!useSubfolder) return { subfolderId: "" };
+
+    if (subfolderMode === "existing") {
+      return { subfolderId };
+    }
+
+    // new
+    const name = newSubfolderName.trim();
+    if (!name) {
+      setSubfolderWarning("Please enter a new subfolder name.");
+      throw new Error("Missing subfolder name.");
+    }
+
+    const res = await fetch(`${API}/api/subfolders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...getUploadHeaders(),
+      },
+      body: JSON.stringify({ parentId: folderId, name }),
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json")
+      ? await res.json()
+      : { raw: await res.text() };
+
+    if (res.status === 409) {
+      // folder name exists: block creation
+      const msg =
+        payload?.error ||
+        `A folder named "${name}" already exists. Please pick another name.`;
+      setSubfolderWarning(msg);
+      throw new Error(msg);
+    }
+
+    if (!res.ok) {
+      const msg =
+        payload?.error ||
+        payload?.message ||
+        payload?.raw ||
+        `Failed to create folder (${res.status})`;
+      setSubfolderWarning(msg);
+      throw new Error(msg);
+    }
+
+    // refresh subfolder list (so it appears in dropdown too)
+    const createdId = payload.id;
+    const createdName = payload.name;
+
+    // Add locally + sort
+    const next = [...subfolders, { id: createdId, name: createdName }].sort(
+      (a, b) =>
+        String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+          sensitivity: "base",
+        })
+    );
+    setSubfolders(next);
+
+    // Auto-switch to existing + select created
+    setSubfolderMode("existing");
+    setSubfolderId(createdId);
+    setNewSubfolderName("");
+
+    setStatus(`Subfolder created: ${createdName}`);
+    return { subfolderId: createdId };
+  }
+
+  async function uploadFile(confirmDuplicate = false) {
     if (!file) return setStatus("Pick a file first.");
     if (!folderId) return setStatus("Pick a folder first.");
     if (!desiredName.trim())
@@ -57,12 +184,19 @@ export default function App() {
 
     setBusy(true);
     setStatus("Uploading...");
-    // reset warning on every attempt
     setDuplicateWarning(false);
+    setSubfolderWarning("");
 
     try {
+      // If user chose "new subfolder", create it first
+      const { subfolderId: createdOrSelectedSubfolderId } =
+        await ensureSubfolderIfNeeded();
+
       const form = new FormData();
       form.append("folderId", folderId);
+      if (useSubfolder && createdOrSelectedSubfolderId) {
+        form.append("subfolderId", createdOrSelectedSubfolderId);
+      }
       form.append("file", file);
       form.append("desiredName", desiredName.trim());
       if (confirmDuplicate) form.append("confirmDuplicate", "true");
@@ -73,13 +207,11 @@ export default function App() {
         headers: getUploadHeaders(),
       });
 
-      // Read response safely (JSON if possible, otherwise text)
       const contentType = res.headers.get("content-type") || "";
       const payload = contentType.includes("application/json")
         ? await res.json()
         : { raw: await res.text() };
 
-      // Duplicate detected → show warning UI instead of failing
       if (res.status === 409) {
         setDuplicateWarning(true);
         setStatus(
@@ -89,7 +221,6 @@ export default function App() {
         return;
       }
 
-      // Other errors → show useful message
       if (!res.ok) {
         const msg =
           payload?.error ||
@@ -107,7 +238,7 @@ export default function App() {
     }
   }
 
-  // Bold only when folders loaded (you can extend this list if you want)
+  // Bold only when folders loaded
   const statusIsBold = status === "Folders loaded.";
 
   return (
@@ -116,13 +247,16 @@ export default function App() {
         <h2 style={{ marginTop: 0 }}>Upload to Google Drive</h2>
 
         <label style={styles.label}>
-          Choose folder:
+          Choose main folder:
           <select
             style={styles.input}
             value={folderId}
             onChange={(e) => {
               setFolderId(e.target.value);
               setDuplicateWarning(false);
+              setSubfolderWarning("");
+              // if we’re using subfolders, reset selection until loaded
+              setSubfolderId("");
             }}
             disabled={busy}
           >
@@ -133,6 +267,125 @@ export default function App() {
             ))}
           </select>
         </label>
+
+        {/* Subfolder toggle */}
+        <div style={{ marginTop: 14 }}>
+          <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={useSubfolder}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setUseSubfolder(checked);
+                setDuplicateWarning(false);
+                setSubfolderWarning("");
+                if (!checked) {
+                  setSubfolderId("");
+                  setNewSubfolderName("");
+                }
+              }}
+              disabled={busy}
+            />
+            <span style={{ fontWeight: 700 }}>
+              Upload into a subfolder (optional)
+            </span>
+          </label>
+
+          {useSubfolder && (
+            <div style={styles.subBox}>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <label style={styles.radio}>
+                  <input
+                    type="radio"
+                    name="submode"
+                    value="existing"
+                    checked={subfolderMode === "existing"}
+                    onChange={() => {
+                      setSubfolderMode("existing");
+                      setSubfolderWarning("");
+                      // pick first if available
+                      setSubfolderId(subfolders[0]?.id || "");
+                    }}
+                    disabled={busy}
+                  />
+                  Existing subfolder
+                </label>
+
+                <label style={styles.radio}>
+                  <input
+                    type="radio"
+                    name="submode"
+                    value="new"
+                    checked={subfolderMode === "new"}
+                    onChange={() => {
+                      setSubfolderMode("new");
+                      setSubfolderWarning("");
+                      setSubfolderId("");
+                    }}
+                    disabled={busy}
+                  />
+                  New subfolder
+                </label>
+              </div>
+
+              {subfolderMode === "existing" && (
+                <>
+                  <label style={styles.labelThin}>
+                    Pick subfolder:
+                    <select
+                      style={styles.input}
+                      value={subfolderId}
+                      onChange={(e) => {
+                        setSubfolderId(e.target.value);
+                        setSubfolderWarning("");
+                      }}
+                      disabled={busy}
+                    >
+                      {subfolders.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {!subfolders.length && (
+                    <div style={styles.warn}>
+                      No subfolders found in this folder. Switch to “New
+                      subfolder” to create one.
+                    </div>
+                  )}
+                </>
+              )}
+
+              {subfolderMode === "new" && (
+                <label style={styles.labelThin}>
+                  New subfolder name:
+                  <input
+                    style={styles.input}
+                    value={newSubfolderName}
+                    onChange={(e) => {
+                      setNewSubfolderName(e.target.value);
+                      setSubfolderWarning("");
+                    }}
+                    placeholder="e.g. Team 3 - Part 2"
+                    disabled={busy}
+                  />
+                  <div style={styles.subtle}>
+                    Must be unique (cannot match an existing subfolder).
+                  </div>
+                </label>
+              )}
+
+              {!!subfolderWarning && (
+                <div style={styles.warnBox}>
+                  <div style={styles.warnTitle}>Subfolder issue</div>
+                  <div style={styles.warnText}>{subfolderWarning}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         <label style={styles.label}>
           Choose file:
@@ -183,13 +436,13 @@ export default function App() {
             ...styles.button,
             ...(canUpload ? null : styles.buttonDisabled),
           }}
-          onClick={() => upload(false)}
+          onClick={() => uploadFile(false)}
           disabled={!canUpload}
         >
           {busy ? "Uploading..." : "Upload"}
         </button>
 
-        {/* Duplicate warning UI */}
+        {/* Duplicate warning (files) */}
         {duplicateWarning && (
           <div style={styles.warnBox}>
             <div style={styles.warnTitle}>Duplicate name</div>
@@ -207,7 +460,7 @@ export default function App() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button
                 style={styles.button}
-                onClick={() => upload(true)}
+                onClick={() => uploadFile(true)}
                 disabled={busy}
               >
                 Upload anyway
@@ -227,7 +480,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Status box (improved readability + bold for "Folders loaded.") */}
+        {/* Status box (better readability on iPhone) */}
         <pre style={styles.status}>
           <span style={statusIsBold ? styles.statusBold : undefined}>
             {status}
@@ -273,8 +526,21 @@ const styles = {
     padding: 18,
     boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
   },
-  label: { display: "block", marginTop: 14, fontWeight: 600 },
+
+  label: { display: "block", marginTop: 14, fontWeight: 700 },
+  labelThin: { display: "block", marginTop: 12, fontWeight: 600 },
+
   input: { display: "block", width: "100%", marginTop: 8, padding: 10 },
+
+  subBox: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #eee",
+    background: "#fafafa",
+  },
+
+  radio: { display: "flex", alignItems: "center", gap: 8, fontWeight: 600 },
 
   button: {
     marginTop: 18,
@@ -294,11 +560,11 @@ const styles = {
     padding: "10px 16px",
     borderRadius: 10,
     border: "1px solid #ddd",
-    background: "#f9f9f9",
+    background: "#f3f3f3",
     cursor: "pointer",
   },
 
-  // ✅ Improved readability: darker text + slightly stronger border
+  // ✅ Improved readability on iPhone: darker text + stronger border
   status: {
     marginTop: 16,
     background: "#fafafa",
@@ -306,56 +572,49 @@ const styles = {
     borderRadius: 10,
     whiteSpace: "pre-wrap",
     border: "1px solid #e6e6e6",
-    color: "#111", // key for iPhone readability
+    color: "#111",
     lineHeight: 1.35,
   },
-
-  // ✅ Bold status when folders loaded
   statusBold: {
     fontWeight: 800,
   },
 
-  hint: { marginTop: 12, fontSize: 12, opacity: 0.75 },
+  hint: { marginTop: 12, fontSize: 12, opacity: 0.8 },
   subtle: { marginTop: 8, fontSize: 12, opacity: 0.85 },
 
-  // ✅ Make warnings readable on iPhone: darker text + stronger border
-  warn: {
-    marginTop: 8,
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e0b34c",
-    background: "#fff8e1",
-    fontSize: 13,
-    lineHeight: 1.35,
-    color: "#2b2b2b",
+  codeChip: {
+    padding: "2px 6px",
+    borderRadius: 8,
+    border: "1px solid #e5e5e5",
+    background: "#fff",
   },
 
-  // ✅ Stronger, more readable duplicate warning box
+  warn: {
+    marginTop: 8,
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid #f0d28a",
+    background: "#fff8e1",
+    fontSize: 12,
+    lineHeight: 1.3,
+    color: "#111",
+  },
+
   warnBox: {
     marginTop: 14,
     padding: 14,
     borderRadius: 12,
-    border: "1px solid #e0b34c",
+    border: "1px solid #f0c36d",
     background: "#fff8e1",
-    color: "#2b2b2b",
+    color: "#111",
   },
   warnTitle: {
-    fontWeight: 800,
+    fontWeight: 900,
     marginBottom: 6,
-    color: "#1a1a1a",
   },
   warnText: {
-    marginBottom: 10,
     fontSize: 13,
     lineHeight: 1.35,
-  },
-
-  // ✅ Code chips with better contrast than default <code> on mobile
-  codeChip: {
-    padding: "2px 6px",
-    borderRadius: 8,
-    background: "#f1f1f1",
-    border: "1px solid #e2e2e2",
-    color: "#111",
+    marginBottom: 10,
   },
 };

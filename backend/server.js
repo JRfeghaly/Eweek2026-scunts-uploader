@@ -57,7 +57,8 @@ const upload = multer({
   dest: TMP_DIR,
   limits: { fileSize: MAX_FILE_SIZE_BYTES },
   fileFilter: (req, file, cb) => {
-    const ok = file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/");
+    const ok =
+      file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/");
     if (!ok) return cb(new Error(`Unsupported file type: ${file.mimetype}`));
     cb(null, true);
   },
@@ -143,17 +144,13 @@ function escapeRegex(s) {
 
 // Decide the next available name: base.ext, base (2).ext, base (3).ext ...
 async function resolveUniqueName(folderId, desiredFullName) {
-  const ext = path.extname(desiredFullName);              // ".mp4" or ""
+  const ext = path.extname(desiredFullName); // ".mp4" or ""
   const base = desiredFullName.slice(0, desiredFullName.length - ext.length); // "abc" or "abc (2)"
 
-  // We want numbering applied to the *base* without any trailing " (n)".
   // If user typed "abc (2)", treat "abc" as the root base.
   const m = base.match(/^(.*) \((\d+)\)$/);
   const rootBase = m ? m[1] : base;
 
-  // Get all candidates containing rootBase, then filter precisely:
-  // rootBase + ext
-  // rootBase (n) + ext  (n>=2)
   const files = await listPotentialDuplicateNames(folderId, rootBase);
 
   const re = new RegExp(
@@ -179,17 +176,38 @@ async function resolveUniqueName(folderId, desiredFullName) {
     }
   }
 
-  // If exact name isn't taken, use it as-is (rootBase.ext)
   const canonical = rootBase + ext;
-  if (!exactTaken && (m ? (base + ext) === canonical : true)) {
-    // If user typed "abc", we return "abc.ext".
-    // If user typed "abc (2)" and "abc.ext" isn't taken, we still prefer "abc.ext".
-    return canonical;
-  }
+  if (!exactTaken && (m ? base + ext === canonical : true)) return canonical;
 
-  // Otherwise next is maxIndex+1 (starting at 2)
   const next = maxIndex + 1;
   return `${rootBase} (${next})${ext}`;
+}
+
+// Create subfolder; block if name exists
+async function createSubfolder(parentId, nameRaw) {
+  const name = sanitizeBaseName(nameRaw);
+  if (!name) throw new Error("Subfolder name is required.");
+
+  const existing = await listSubfolders(parentId);
+  const dup = existing.find((f) => (f.name || "").toLowerCase() === name.toLowerCase());
+  if (dup) {
+    const err = new Error(`A folder named "${name}" already exists.`);
+    err.code = "DUP_FOLDER";
+    err.existingId = dup.id;
+    throw err;
+  }
+
+  const created = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId],
+    },
+    fields: "id,name",
+    supportsAllDrives: true,
+  });
+
+  return created.data; // {id,name}
 }
 
 // ===== ROUTES =====
@@ -206,73 +224,121 @@ app.get("/api/folders", async (req, res) => {
   }
 });
 
-// form-data fields: folderId, desiredName (REQUIRED), file=@...
-// form-data fields:
-// folderId (required)
-// desiredName (required)
-// confirmDuplicate = "true" (optional)
-// file=@...
-
-app.post("/api/upload", requireUploadKey, upload.single("file"), async (req, res) => {
-  const { folderId, desiredName = "", confirmDuplicate } = req.body;
-  const file = req.file;
-
-  if (!file) return res.status(400).json({ error: "No file uploaded" });
-
-  if (!desiredName || !desiredName.trim()) {
-    safeUnlink(file.path);
-    return res.status(400).json({ error: "File name is required." });
-  }
-
-  if (!folderId) {
-    safeUnlink(file.path);
-    return res.status(400).json({ error: "Missing folderId" });
-  }
-
-  const requestedName = getFinalName(file.originalname, desiredName);
-
+// List subfolders of a chosen main folder
+// GET /api/subfolders?parentId=...
+app.get("/api/subfolders", async (req, res) => {
   try {
-    // Step 1: check if base name already exists
-    const ext = path.extname(requestedName);
-    const base = requestedName.slice(0, requestedName.length - ext.length);
+    const parentId = req.query.parentId;
+    if (!parentId) return res.status(400).json({ error: "Missing parentId" });
 
-    const existing = await listPotentialDuplicateNames(folderId, base);
-
-    const exactMatch = existing.some(
-      (f) => f.name === requestedName
-    );
-
-    // If exists and not confirmed → warn
-    if (exactMatch && confirmDuplicate !== "true") {
-      safeUnlink(file.path);
-      return res.status(409).json({
-        message: `A file named "${requestedName}" already exists.`,
-        warning: true,
-      });
-    }
-
-    // Step 2: resolve unique indexed name
-    const finalName = await resolveUniqueName(folderId, requestedName);
-
-    const created = await drive.files.create({
-      requestBody: { name: finalName, parents: [folderId] },
-      media: { mimeType: file.mimetype, body: fs.createReadStream(file.path) },
-      fields: "id,name,webViewLink",
-      supportsAllDrives: true,
-    });
-
-    safeUnlink(file.path);
-    res.json(created.data);
+    const subfolders = await listSubfolders(parentId);
+    res.json({ parentId, subfolders });
   } catch (e) {
-    safeUnlink(file.path);
     res.status(500).json({ error: e.message });
   }
 });
 
+// Create subfolder under a chosen main folder
+// POST /api/subfolders  { parentId, name }
+app.post("/api/subfolders", requireUploadKey, async (req, res) => {
+  try {
+    const { parentId, name } = req.body || {};
+    if (!parentId) return res.status(400).json({ error: "Missing parentId" });
+    if (!name || !String(name).trim())
+      return res.status(400).json({ error: "Subfolder name is required." });
+
+    const folder = await createSubfolder(parentId, name);
+    res.json(folder);
+  } catch (e) {
+    if (e.code === "DUP_FOLDER") {
+      return res.status(409).json({
+        error: e.message,
+        existingId: e.existingId,
+      });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Upload:
+// folderId (required) = main folder
+// subfolderId (optional) = if provided, upload INTO this folder instead
+// desiredName (required)
+// confirmDuplicate optional
+app.post(
+  "/api/upload",
+  requireUploadKey,
+  upload.single("file"),
+  async (req, res) => {
+    const {
+      folderId,
+      subfolderId = "",
+      desiredName = "",
+      confirmDuplicate,
+    } = req.body;
+
+    const file = req.file;
+
+    if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+    if (!desiredName || !desiredName.trim()) {
+      safeUnlink(file.path);
+      return res.status(400).json({ error: "File name is required." });
+    }
+
+    if (!folderId) {
+      safeUnlink(file.path);
+      return res.status(400).json({ error: "Missing folderId" });
+    }
+
+    // If subfolderId was provided, that's the real destination
+    const targetFolderId = subfolderId?.trim() ? subfolderId.trim() : folderId;
+
+    const requestedName = getFinalName(file.originalname, desiredName);
+
+    try {
+      // Step 1: check if base name already exists
+      const ext = path.extname(requestedName);
+      const base = requestedName.slice(0, requestedName.length - ext.length);
+
+      const existing = await listPotentialDuplicateNames(targetFolderId, base);
+
+      const exactMatch = existing.some((f) => f.name === requestedName);
+
+      // If exists and not confirmed → warn
+      if (exactMatch && confirmDuplicate !== "true") {
+        safeUnlink(file.path);
+        return res.status(409).json({
+          message: `A file named "${requestedName}" already exists.`,
+          warning: true,
+        });
+      }
+
+      // Step 2: resolve unique indexed name
+      const finalName = await resolveUniqueName(targetFolderId, requestedName);
+
+      const created = await drive.files.create({
+        requestBody: { name: finalName, parents: [targetFolderId] },
+        media: { mimeType: file.mimetype, body: fs.createReadStream(file.path) },
+        fields: "id,name,webViewLink",
+        supportsAllDrives: true,
+      });
+
+      safeUnlink(file.path);
+      res.json(created.data);
+    } catch (e) {
+      safeUnlink(file.path);
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
 // Multer errors
 app.use((err, req, res, next) => {
   if (err?.code === "LIMIT_FILE_SIZE") {
-    return res.status(413).json({ error: `File too large. Max is ${MAX_FILE_SIZE_MB} MB` });
+    return res
+      .status(413)
+      .json({ error: `File too large. Max is ${MAX_FILE_SIZE_MB} MB` });
   }
   return res.status(400).json({ error: err?.message || "Bad request" });
 });
