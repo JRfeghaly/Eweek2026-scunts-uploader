@@ -202,7 +202,8 @@ export default function App() {
             <div style={styles.readmeText}>
               <strong>
                 This app will be used to upload scunts. Choose one of the four
-                folders available. Choose the photo or video you want to upload.
+                folders available: General Scunts, Walking Crawl, Running Crawl, Boiler Room. 
+                Choose the photo or video you want to upload.
                 <br />
                 <br />
                 If the scunt has multiple photos / videos please upload it in a
