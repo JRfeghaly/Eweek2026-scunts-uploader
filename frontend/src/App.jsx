@@ -448,10 +448,11 @@ const styles = {
   },
   readmeHeader: {
     fontWeight: 900,
-    fontSize: 36,   // ⬅ increase size (try 32–40)
+    fontSize: 38,
+    letterSpacing: 2,
     cursor: "pointer",
     userSelect: "none",
-    letterSpacing: 2, // ⬅ makes it feel more "TITLE"
+    color: "#000",          // ⬅ FORCE BLACK
   },  
   readmeText: {
     marginTop: 14,
