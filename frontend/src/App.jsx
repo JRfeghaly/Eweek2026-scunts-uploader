@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import "./App.css";
 
 export default function App() {
   const API = useMemo(
@@ -525,11 +526,6 @@ const styles = {
     color: "#000",
   },
   statusBold: { fontWeight: 900 },
-
-  .folder-name {
-    text-decoration: underline;
-    font-weight: 600; /* optional */
-  },  
 
   warnBox: {
     marginTop: 12,

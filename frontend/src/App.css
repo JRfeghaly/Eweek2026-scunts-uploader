@@ -40,3 +40,8 @@
 .read-the-docs {
   color: #888;
 }
+
+.folder-name {
+  text-decoration: underline;
+  font-weight: 600;
+}
