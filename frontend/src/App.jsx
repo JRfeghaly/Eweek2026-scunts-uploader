@@ -235,7 +235,7 @@ export default function App() {
                 If the scunt has only 1 photo / video upload it outside of a
                 folder:
                 <br />
-                - File name must be a single number (X).
+                - File name must be a single number (X), being the number of the scunt.
                 <br />
                 - If the same number already exists, you can choose “Upload
                 anyway” and it will be saved as X (1), X (2), ...
