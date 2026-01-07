@@ -309,7 +309,20 @@ export default function App() {
           <div style={styles.warnBox}>
             File already exists. Upload anyway?
             <br />
-            <button onClick={() => uploadFile(true)}>Upload anyway</button>
+            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <button onClick={() => uploadFile(true)} disabled={busy}>
+                Upload anyway
+              </button>
+              <button
+                onClick={() => {
+                  setDuplicateWarning(false);
+                  setStatus("Cancelled.");
+                }}
+                disabled={busy}
+              >
+                No
+              </button>
+            </div>
           </div>
         )}
 

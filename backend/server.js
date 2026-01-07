@@ -314,21 +314,25 @@ app.post(
         const chosen = String(Number(String(fileNumber).trim()));
         const taken = existingBases.has(chosen);
 
+        // Duplicate naming (outside subfolder): X, X (1), X (2), ...
+        function nextDuplicateBase(X) {
+          let n = 1;
+          while (existingBases.has(`${X} (${n})`)) n++;
+          return `${X} (${n})`;
+        }
+
         if (taken && confirmDuplicate !== "true") {
-          // Suggest next available number
-          let next = Number(chosen);
-          while (existingBases.has(String(next))) next++;
+          const suggested = nextDuplicateBase(chosen);
 
           safeUnlink(file.path);
           return res.status(409).json({
-            message: `A file numbered "${chosen}" already exists. Upload anyway to save as "${next}${originalExt}".`,
+            message: `A file numbered "${chosen}" already exists. Upload anyway to save as "${suggested}${originalExt}".`,
             warning: true,
           });
         }
 
-        let x = Number(chosen);
-        while (existingBases.has(String(x))) x++;
-        baseToUse = String(x);
+        // If the chosen X is free, keep it. Otherwise (confirmed), save as X (n)
+        baseToUse = taken ? nextDuplicateBase(chosen) : chosen;
       }
 
       const finalName = `${baseToUse}${originalExt}`;
