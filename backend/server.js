@@ -113,14 +113,20 @@ function escapeForDriveQuery(str) {
 }
 
 async function listAllFilesInFolder(folderId) {
-  const q = [`'${folderId}' in parents`, "trashed = false"].join(" and ");
+  // Used for upload naming / duplicate checks.
+  // We exclude folders so folder names (like "1") do not interfere with file naming.
+  const q = [
+    `'${folderId}' in parents`,
+    "trashed = false",
+    "mimeType != 'application/vnd.google-apps.folder'",
+  ].join(" and ");
 
   let pageToken;
   const out = [];
   do {
     const resp = await drive.files.list({
       q,
-      fields: "nextPageToken, files(id,name)",
+      fields: "nextPageToken, files(id,name,mimeType)",
       pageSize: 1000,
       pageToken,
       supportsAllDrives: true,
@@ -312,16 +318,25 @@ app.post(
         }
 
         const chosen = String(Number(String(fileNumber).trim()));
-        const taken = existingBases.has(chosen);
+        const baseExists = existingBases.has(chosen);
 
         // Duplicate naming (outside subfolder): X, X (1), X (2), ...
+        // We look for existing duplicates of the form "X (n)" and then pick the next n.
         function nextDuplicateBase(X) {
-          let n = 1;
-          while (existingBases.has(`${X} (${n})`)) n++;
-          return `${X} (${n})`;
+          const esc = String(X).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const re = new RegExp(`^${esc} \\((\\d+)\\)$`);
+
+          let maxN = 0;
+          for (const b of existingBases) {
+            const m = String(b).match(re);
+            if (!m) continue;
+            const n = Number(m[1]);
+            if (Number.isFinite(n) && n > maxN) maxN = n;
+          }
+          return `${X} (${maxN + 1})`;
         }
 
-        if (taken && confirmDuplicate !== "true") {
+        if (baseExists && confirmDuplicate !== "true") {
           const suggested = nextDuplicateBase(chosen);
 
           safeUnlink(file.path);
@@ -332,7 +347,7 @@ app.post(
         }
 
         // If the chosen X is free, keep it. Otherwise (confirmed), save as X (n)
-        baseToUse = taken ? nextDuplicateBase(chosen) : chosen;
+        baseToUse = baseExists ? nextDuplicateBase(chosen) : chosen;
       }
 
       const finalName = `${baseToUse}${originalExt}`;
