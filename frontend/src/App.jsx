@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import "./App.css";
 
 export default function App() {
   const API = useMemo(
@@ -433,7 +432,7 @@ const styles = {
   page: {
     fontFamily: "Arial, sans-serif",
     maxWidth: 720,
-    margin: "40px auto",
+    margin: "40px 0",
     padding: 16,
   },
   card: {
