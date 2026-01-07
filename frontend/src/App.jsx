@@ -14,11 +14,11 @@ export default function App() {
   const [subfolderMode, setSubfolderMode] = useState("existing"); // "existing" | "new"
   const [subfolders, setSubfolders] = useState([]);
   const [subfolderId, setSubfolderId] = useState("");
-  const [newSubfolderName, setNewSubfolderName] = useState("");
+  const [newSubfolderNumber, setNewSubfolderNumber] = useState("");
   const [subfolderWarning, setSubfolderWarning] = useState("");
 
   const [file, setFile] = useState(null);
-  const [desiredName, setDesiredName] = useState("");
+  const [fileNumber, setFileNumber] = useState("");
 
   const [status, setStatus] = useState("Loading folders...");
   const [busy, setBusy] = useState(false);
@@ -78,22 +78,32 @@ export default function App() {
     loadSubfolders();
   }, [API, useSubfolder, folderId, subfolderMode]);
 
-  const finalNamePreview = computeFinalNamePreview(file?.name, desiredName);
+  const selectedSubfolderName = subfolders.find((f) => f.id === subfolderId)?.name || "";
+  const folderNumberX = useSubfolder
+    ? (subfolderMode === "new" ? newSubfolderNumber : selectedSubfolderName)
+    : "";
+
+  const finalNamePreview = computeFinalNamePreview({
+    originalName: file?.name,
+    useSubfolder,
+    folderNumberX,
+    fileNumber,
+  });
 
   const canUpload =
     !!file &&
     !!folderId &&
-    desiredName.trim().length > 0 &&
     !busy &&
-    (!useSubfolder ||
-      (subfolderMode === "existing" && subfolderId) ||
-      (subfolderMode === "new" && newSubfolderName.trim()));
+    (!useSubfolder
+      ? isPositiveIntString(fileNumber)
+      : (subfolderMode === "existing" && !!subfolderId) ||
+        (subfolderMode === "new" && isPositiveIntString(newSubfolderNumber)));
 
   /* ================= UPLOAD ================= */
   async function uploadFile(confirmDuplicate = false) {
     if (!file) return setStatus("Pick a file first.");
-    if (!desiredName.trim())
-      return setStatus("Please enter a file name before uploading.");
+    if (!useSubfolder && !isPositiveIntString(fileNumber))
+      return setStatus('Please enter a file number (integer like "1", "2", "3", ...).');
 
     setBusy(true);
     setStatus("Uploading...");
@@ -115,7 +125,7 @@ export default function App() {
             },
             body: JSON.stringify({
               parentId: folderId,
-              name: newSubfolderName.trim(),
+              name: String(newSubfolderNumber).trim(),
             }),
           });
 
@@ -137,7 +147,7 @@ export default function App() {
       form.append("folderId", folderId);
       if (finalSubfolderId) form.append("subfolderId", finalSubfolderId);
       form.append("file", file);
-      form.append("desiredName", desiredName.trim());
+      if (!finalSubfolderId) form.append("fileNumber", String(fileNumber).trim());
       if (confirmDuplicate) form.append("confirmDuplicate", "true");
 
       const res = await fetch(`${API}/api/upload`, {
@@ -235,9 +245,12 @@ export default function App() {
               <>
                 <input
                   style={styles.input}
-                  placeholder="New subfolder name"
-                  value={newSubfolderName}
-                  onChange={(e) => setNewSubfolderName(e.target.value)}
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  placeholder='Folder number (X) e.g. "3"'
+                  value={newSubfolderNumber}
+                  onChange={(e) => setNewSubfolderNumber(e.target.value)}
                 />
                 <div style={styles.subtleStrong}>
                   Must be unique (cannot already exist)
@@ -260,17 +273,26 @@ export default function App() {
           />
         </label>
 
-        <label style={styles.label}>
-          Name on Drive:
-          <input
-            style={styles.input}
-            value={desiredName}
-            onChange={(e) => setDesiredName(e.target.value)}
-          />
+        {!useSubfolder ? (
+          <label style={styles.label}>
+            File number (X):
+            <input
+              style={styles.input}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={fileNumber}
+              onChange={(e) => setFileNumber(e.target.value)}
+            />
+            <div style={styles.subtleStrong}>
+              Final name: {finalNamePreview || "—"}
+            </div>
+          </label>
+        ) : (
           <div style={styles.subtleStrong}>
-            Final name: {finalNamePreview || "—"}
+            File name will be auto-assigned as: {finalNamePreview || "—"}
           </div>
-        </label>
+        )}
 
         <button
           style={{
@@ -304,13 +326,32 @@ export default function App() {
 }
 
 /* ================= HELPERS ================= */
-function computeFinalNamePreview(originalName, desiredName) {
+function isPositiveIntString(v) {
+  const s = String(v ?? "").trim();
+  return /^\d+$/.test(s) && Number(s) >= 1;
+}
+
+function computeFinalNamePreview({
+  originalName,
+  useSubfolder,
+  folderNumberX,
+  fileNumber,
+}) {
   if (!originalName) return "";
-  if (!desiredName.trim()) return originalName;
+
   const ext = originalName.includes(".")
     ? originalName.slice(originalName.lastIndexOf("."))
     : "";
-  return desiredName.includes(".") ? desiredName : desiredName + ext;
+
+  if (useSubfolder) {
+    if (!isPositiveIntString(folderNumberX)) return "";
+    const X = String(Number(String(folderNumberX).trim()));
+    return `${X}.Y${ext}`;
+  }
+
+  if (!isPositiveIntString(fileNumber)) return "";
+  const X = String(Number(String(fileNumber).trim()));
+  return `${X}${ext}`;
 }
 
 /* ================= STYLES ================= */

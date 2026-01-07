@@ -84,15 +84,10 @@ function sanitizeBaseName(name) {
   return String(name || "").replace(/[\/\\:*?"<>|]/g, "").trim();
 }
 
-function getFinalName(originalName, desiredNameRaw) {
-  const desired = sanitizeBaseName(desiredNameRaw || "");
-  if (!desired) return originalName;
-
-  const originalExt = path.extname(originalName); // ".jpg"
-  const desiredExt = path.extname(desired);
-
-  // If user included extension, keep it; otherwise append original extension
-  return desiredExt ? desired : desired + originalExt;
+function isPositiveIntString(v) {
+  const s = String(v ?? "").trim();
+  // Integer chosen by user; treat as positive integer (1, 2, 3, ...)
+  return /^\d+$/.test(s) && Number(s) >= 1;
 }
 
 async function listSubfolders(parentId) {
@@ -117,76 +112,44 @@ function escapeForDriveQuery(str) {
   return String(str).replace(/'/g, "\\'");
 }
 
-// Fetch potential duplicates (we filter precisely in code)
-async function listPotentialDuplicateNames(folderId, base) {
-  const safeBase = escapeForDriveQuery(base);
+async function listAllFilesInFolder(folderId) {
+  const q = [`'${folderId}' in parents`, "trashed = false"].join(" and ");
 
-  const q = [
-    `'${folderId}' in parents`,
-    `name contains '${safeBase}'`,
-    "trashed = false",
-  ].join(" and ");
+  let pageToken;
+  const out = [];
+  do {
+    const resp = await drive.files.list({
+      q,
+      fields: "nextPageToken, files(id,name)",
+      pageSize: 1000,
+      pageToken,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
 
-  const resp = await drive.files.list({
-    q,
-    fields: "files(id,name)",
-    pageSize: 200,
+    out.push(...(resp.data.files || []));
+    pageToken = resp.data.nextPageToken;
+  } while (pageToken);
+
+  return out;
+}
+
+async function getDriveFileInfo(fileId) {
+  const resp = await drive.files.get({
+    fileId,
+    fields: "id,name,mimeType",
     supportsAllDrives: true,
-    includeItemsFromAllDrives: true,
   });
-
-  return resp.data.files || [];
-}
-
-function escapeRegex(s) {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Decide the next available name: base.ext, base (2).ext, base (3).ext ...
-async function resolveUniqueName(folderId, desiredFullName) {
-  const ext = path.extname(desiredFullName); // ".mp4" or ""
-  const base = desiredFullName.slice(0, desiredFullName.length - ext.length); // "abc" or "abc (2)"
-
-  // If user typed "abc (2)", treat "abc" as the root base.
-  const m = base.match(/^(.*) \((\d+)\)$/);
-  const rootBase = m ? m[1] : base;
-
-  const files = await listPotentialDuplicateNames(folderId, rootBase);
-
-  const re = new RegExp(
-    `^${escapeRegex(rootBase)}(?: \\((\\d+)\\))?${escapeRegex(ext)}$`
-  );
-
-  let maxIndex = 1; // 1 corresponds to "rootBase.ext" (no suffix)
-  let exactTaken = false;
-
-  for (const f of files) {
-    const name = f.name || "";
-    const match = name.match(re);
-    if (!match) continue;
-
-    const numStr = match[1];
-    if (!numStr) {
-      exactTaken = true;
-      continue;
-    }
-    const n = Number(numStr);
-    if (Number.isFinite(n) && n >= 2) {
-      if (n > maxIndex) maxIndex = n;
-    }
-  }
-
-  const canonical = rootBase + ext;
-  if (!exactTaken && (m ? base + ext === canonical : true)) return canonical;
-
-  const next = maxIndex + 1;
-  return `${rootBase} (${next})${ext}`;
+  return resp.data;
 }
 
 // Create subfolder; block if name exists
 async function createSubfolder(parentId, nameRaw) {
   const name = sanitizeBaseName(nameRaw);
   if (!name) throw new Error("Subfolder name is required.");
+  if (!isPositiveIntString(name)) {
+    throw new Error('Folder name must be an integer like "1", "2", "3", ...');
+  }
 
   const existing = await listSubfolders(parentId);
   const dup = existing.find((f) => (f.name || "").toLowerCase() === name.toLowerCase());
@@ -273,18 +236,13 @@ app.post(
     const {
       folderId,
       subfolderId = "",
-      desiredName = "",
+      fileNumber = "",
       confirmDuplicate,
     } = req.body;
 
     const file = req.file;
 
     if (!file) return res.status(400).json({ error: "No file uploaded" });
-
-    if (!desiredName || !desiredName.trim()) {
-      safeUnlink(file.path);
-      return res.status(400).json({ error: "File name is required." });
-    }
 
     if (!folderId) {
       safeUnlink(file.path);
@@ -294,28 +252,86 @@ app.post(
     // If subfolderId was provided, that's the real destination
     const targetFolderId = subfolderId?.trim() ? subfolderId.trim() : folderId;
 
-    const requestedName = getFinalName(file.originalname, desiredName);
+    const originalExt = path.extname(file.originalname) || "";
 
     try {
-      // Step 1: check if base name already exists
-      const ext = path.extname(requestedName);
-      const base = requestedName.slice(0, requestedName.length - ext.length);
+      // Naming rules:
+      // - Uploading outside a subfolder: name is X (integer provided by user)
+      // - Uploading inside a subfolder named X: name is X.Y (Y auto-increments from 1)
+      const files = await listAllFilesInFolder(targetFolderId);
+      const existingBases = new Set(
+        files
+          .map((f) => (f.name ? path.basename(f.name) : ""))
+          .filter(Boolean)
+          .map((name) => {
+            const ext = path.extname(name);
+            return name.slice(0, name.length - ext.length); // base without extension
+          })
+      );
 
-      const existing = await listPotentialDuplicateNames(targetFolderId, base);
+      let baseToUse = "";
 
-      const exactMatch = existing.some((f) => f.name === requestedName);
+      // CASE A: inside subfolder => X.Y (auto)
+      if (subfolderId?.trim()) {
+        const folderInfo = await getDriveFileInfo(subfolderId.trim());
+        if (folderInfo.mimeType !== "application/vnd.google-apps.folder") {
+          throw new Error("subfolderId is not a folder.");
+        }
 
-      // If exists and not confirmed → warn
-      if (exactMatch && confirmDuplicate !== "true") {
-        safeUnlink(file.path);
-        return res.status(409).json({
-          message: `A file named "${requestedName}" already exists.`,
-          warning: true,
-        });
+        const folderName = sanitizeBaseName(folderInfo.name);
+        if (!isPositiveIntString(folderName)) {
+          throw new Error(
+            `Selected folder name must be an integer like "1", "2", "3". Found: "${folderInfo.name}"`
+          );
+        }
+
+        const X = String(Number(folderName));
+        // Find the next Y such that base "X.Y" doesn't already exist (regardless of extension)
+        let maxY = 0;
+        const re = new RegExp(`^${X}\\.(\\d+)$`);
+        for (const b of existingBases) {
+          const m = String(b).match(re);
+          if (!m) continue;
+          const y = Number(m[1]);
+          if (Number.isFinite(y) && y > maxY) maxY = y;
+        }
+
+        let y = maxY + 1;
+        // Defensive: ensure truly free in case of weird existing names
+        while (existingBases.has(`${X}.${y}`)) y++;
+        baseToUse = `${X}.${y}`;
       }
 
-      // Step 2: resolve unique indexed name
-      const finalName = await resolveUniqueName(targetFolderId, requestedName);
+      // CASE B: outside subfolder => X (user-chosen)
+      else {
+        if (!isPositiveIntString(fileNumber)) {
+          safeUnlink(file.path);
+          return res
+            .status(400)
+            .json({ error: 'File number is required (integer like "1", "2", "3", ...)'});
+        }
+
+        const chosen = String(Number(String(fileNumber).trim()));
+        const taken = existingBases.has(chosen);
+
+        if (taken && confirmDuplicate !== "true") {
+          // Suggest next available number
+          let next = Number(chosen);
+          while (existingBases.has(String(next))) next++;
+
+          safeUnlink(file.path);
+          return res.status(409).json({
+            message: `A file numbered "${chosen}" already exists. Upload anyway to save as "${next}${originalExt}".`,
+            warning: true,
+          });
+        }
+
+        let x = Number(chosen);
+        while (existingBases.has(String(x))) x++;
+        baseToUse = String(x);
+      }
+
+      const finalName = `${baseToUse}${originalExt}`;
 
       const created = await drive.files.create({
         requestBody: { name: finalName, parents: [targetFolderId] },
