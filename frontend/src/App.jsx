@@ -9,6 +9,9 @@ export default function App() {
   const [folders, setFolders] = useState([]);
   const [folderId, setFolderId] = useState("");
 
+  // README toggle
+  const [showReadme, setShowReadme] = useState(true);
+
   // Subfolder feature
   const [useSubfolder, setUseSubfolder] = useState(false);
   const [subfolderMode, setSubfolderMode] = useState("existing"); // "existing" | "new"
@@ -78,9 +81,12 @@ export default function App() {
     loadSubfolders();
   }, [API, useSubfolder, folderId, subfolderMode]);
 
-  const selectedSubfolderName = subfolders.find((f) => f.id === subfolderId)?.name || "";
+  const selectedSubfolderName =
+    subfolders.find((f) => f.id === subfolderId)?.name || "";
   const folderNumberX = useSubfolder
-    ? (subfolderMode === "new" ? newSubfolderNumber : selectedSubfolderName)
+    ? subfolderMode === "new"
+      ? newSubfolderNumber
+      : selectedSubfolderName
     : "";
 
   const finalNamePreview = computeFinalNamePreview({
@@ -103,7 +109,9 @@ export default function App() {
   async function uploadFile(confirmDuplicate = false) {
     if (!file) return setStatus("Pick a file first.");
     if (!useSubfolder && !isPositiveIntString(fileNumber))
-      return setStatus('Please enter a file number (integer like "1", "2", "3", ...).');
+      return setStatus(
+        'Please enter a file number (integer like "1", "2", "3", ...).'
+      );
 
     setBusy(true);
     setStatus("Uploading...");
@@ -136,7 +144,8 @@ export default function App() {
             throw new Error(payload.error);
           }
 
-          if (!res.ok) throw new Error(payload.error || "Failed to create folder");
+          if (!res.ok)
+            throw new Error(payload.error || "Failed to create folder");
 
           finalSubfolderId = payload.id;
           setStatus(`Subfolder created: ${payload.name}`);
@@ -180,6 +189,52 @@ export default function App() {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
+        {/* ================= README ================= */}
+        <div style={styles.readmeBox}>
+          <div
+            style={styles.readmeHeader}
+            onClick={() => setShowReadme((v) => !v)}
+          >
+            READ ME {showReadme ? "▲" : "▼"}
+          </div>
+
+          {showReadme && (
+            <div style={styles.readmeText}>
+              <strong>
+                This app will be used to upload scunts. Choose one of the four
+                folders available. Choose the photo or video you want to upload.
+                <br />
+                <br />
+                If the scunt has multiple photos / videos please upload it in a
+                folder:
+                <br />
+                - Create a folder and upload all related files inside it.
+                <br />
+                - Folder names must be a single number (X) and must be unique.
+                <br />
+                - Files inside the folder are named automatically as X.1, X.2,
+                X.3, ... (where X is the folder number).
+                <br />
+                <br />
+                If the scunt has only 1 photo / video upload it outside of a
+                folder:
+                <br />
+                - File name must be a single number (X).
+                <br />
+                - If the same number already exists, you can choose “Upload
+                anyway” and it will be saved as X (1), X (2), ...
+                <br />
+                <br />
+                <span style={styles.readmeImportant}>
+                  IMPORTANT: Might take some time to connect to the Drive. Wait
+                  until available folders appear.
+                </span>
+              </strong>
+            </div>
+          )}
+        </div>
+        {/* =============== END README =============== */}
+
         <h2 style={styles.title}>Upload to Google Drive</h2>
 
         <label style={styles.label}>
@@ -209,23 +264,23 @@ export default function App() {
 
         {useSubfolder && (
           <div style={styles.subBox}>
-              <label style={styles.radio}>
-                <input
-                  type="radio"
-                  checked={subfolderMode === "existing"}
-                  onChange={() => setSubfolderMode("existing")}
-                />
-                <span style={styles.radioText}>Existing subfolder</span>
-              </label>
+            <label style={styles.radio}>
+              <input
+                type="radio"
+                checked={subfolderMode === "existing"}
+                onChange={() => setSubfolderMode("existing")}
+              />
+              <span style={styles.radioText}>Existing subfolder</span>
+            </label>
 
-              <label style={styles.radio}>
-                <input
-                  type="radio"
-                  checked={subfolderMode === "new"}
-                  onChange={() => setSubfolderMode("new")}
-                />
-                <span style={styles.radioText}>New subfolder</span>
-              </label>
+            <label style={styles.radio}>
+              <input
+                type="radio"
+                checked={subfolderMode === "new"}
+                onChange={() => setSubfolderMode("new")}
+              />
+              <span style={styles.radioText}>New subfolder</span>
+            </label>
 
             {subfolderMode === "existing" && (
               <select
@@ -383,6 +438,31 @@ const styles = {
   },
   title: { fontWeight: 900 },
 
+  // README styles
+  readmeBox: {
+    border: "3px solid #000",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 20,
+    background: "#f9f9f9",
+  },
+  readmeHeader: {
+    fontWeight: 900,
+    fontSize: 28,
+    cursor: "pointer",
+    userSelect: "none",
+  },
+  readmeText: {
+    marginTop: 14,
+    fontSize: 14,
+    lineHeight: 1.5,
+    color: "#000",
+  },
+  readmeImportant: {
+    color: "red",
+    fontWeight: 900,
+  },
+
   label: { fontWeight: 900, marginTop: 16, display: "block", color: "#000" },
   input: { width: "100%", padding: 10, marginTop: 6 },
 
@@ -414,7 +494,6 @@ const styles = {
     fontSize: 15,
     color: "#000",
   },
-  
 
   subtleStrong: {
     fontWeight: 800,
