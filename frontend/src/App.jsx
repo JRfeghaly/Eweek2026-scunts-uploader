@@ -452,7 +452,8 @@ const styles = {
     letterSpacing: 2,
     cursor: "pointer",
     userSelect: "none",
-    color: "#000",          // ⬅ FORCE BLACK
+    color: "#000",         // ⬅ FORCE BLACK
+    WebkitTextFillColor: "#000",
   },  
   readmeText: {
     marginTop: 14,
