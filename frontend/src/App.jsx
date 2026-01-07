@@ -204,10 +204,10 @@ export default function App() {
               <strong>
               This app will be used to upload scunts. Choose one of the four
               folders available:
-                  <span class="folder-name">General Scunts</span>,
-                  <span class="folder-name">Walking Crawl</span>,
-                  <span class="folder-name">Running Crawl</span>,
-                  <span class="folder-name">Boiler Room</span>.
+                  General Scunts,
+                  Walking Crawl,
+                  Running Crawl,
+                  Boiler Room.
               Choose the photo or video you want to upload.
                 <br />
                 <br />
