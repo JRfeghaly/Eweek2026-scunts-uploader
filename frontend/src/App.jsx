@@ -205,7 +205,7 @@ export default function App() {
               <br /><br />
               Each scunt is identified by a unique number.
               <br />
-              <b>Example:</b> Scunt number <b>10</b> must be uploaded as file or folder <b>10</b>.
+              <b>Example:</b> Scunt number <b>69</b> must be uploaded as file or folder <b>69</b>.
               <br /><br />
                 Choose one of the four available folders:
                 <br />
@@ -229,7 +229,7 @@ export default function App() {
                 - Folder names must be a single number (X) and must be unique.
                 <br />
                 - Files inside the folder are named automatically as X.1, X.2,
-                X.3, ... (where X is the folder number).
+                X.3, ... (where X is the folder number). Example scunt 67: will be 67.1, 67.2, 67.3,...
                 <br />
                 <br />
                 If the scunt has only 1 photo / video upload it outside of a
